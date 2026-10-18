@@ -276,4 +276,80 @@ class server_test extends \advanced_testcase {
         $this->assertEquals('notypeheader', $decoded['errorcode']);
         $this->assertEquals('No Content Type header found in request sent to Moodle', $decoded['message']);
     }
+
+    /**
+     * Test the request parameters are not parsed when the token is invalid.
+     *
+     * @covers \webservice_restful_server::run
+     */
+    public function test_run_invalid_token_does_not_parse_parameters(): void {
+        $this->resetAfterTest();
+
+        $_SERVER['HTTP_AUTHORIZATION'] = 'not-a-real-token';
+        $_SERVER['HTTP_ACCEPT'] = 'application/json';
+        $_SERVER['HTTP_CONTENT_TYPE'] = 'application/json';
+        $_SERVER['PATH_INFO'] = '/core_webservice_get_site_info';
+        $_GET['serviceshortnames'] = ['restfultest'];
+
+        $server = new \webservice_restful_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        try {
+            $server->run();
+            $this->fail('An invalid token must be rejected.');
+        } catch (\moodle_exception $e) {
+            $this->assertEquals('invalidtoken', $e->errorcode);
+        } finally {
+            restore_exception_handler();
+        }
+
+        $parameters = new \ReflectionProperty($server, 'parameters');
+        $this->assertNull($parameters->getValue($server));
+    }
+
+    /**
+     * Test the request parameters are parsed and executed when the token is valid.
+     *
+     * @covers \webservice_restful_server::run
+     */
+    public function test_run_valid_token_parses_parameters(): void {
+        $this->resetAfterTest();
+
+        $generator = $this->getDataGenerator()->get_plugin_generator('core_webservice');
+        $service = $generator->create_service(['name' => 'Restful test', 'shortname' => 'restfultest', 'enabled' => 1]);
+        $generator->create_service_functions(['service' => 'restfultest', 'functions' => 'core_webservice_get_site_info']);
+        $token = \core_external\util::generate_token(
+            EXTERNAL_TOKEN_PERMANENT,
+            $service,
+            get_admin()->id,
+            \context_system::instance()
+        );
+
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer ' . $token;
+        $_SERVER['HTTP_ACCEPT'] = 'application/json';
+        $_SERVER['HTTP_CONTENT_TYPE'] = 'application/json';
+        $_SERVER['PATH_INFO'] = '/core_webservice_get_site_info';
+        $_GET['serviceshortnames'] = ['restfultest'];
+
+        // Stop before the response is sent, run() ends with die.
+        $server = new class (WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN) extends \webservice_restful_server {
+            /**
+             * Interrupt the request instead of sending the response.
+             */
+            protected function send_response() {
+                throw new \RuntimeException('send_response');
+            }
+        };
+        try {
+            $server->run();
+            $this->fail('The response must be reached.');
+        } catch (\RuntimeException $e) {
+            $this->assertEquals('send_response', $e->getMessage());
+        } finally {
+            restore_exception_handler();
+        }
+
+        $parameters = new \ReflectionProperty($server, 'parameters');
+        $this->assertEquals(['serviceshortnames' => ['restfultest']], $parameters->getValue($server));
+        $returns = new \ReflectionProperty($server, 'returns');
+        $this->assertEquals('admin', $returns->getValue($server)['username']);
+    }
 }

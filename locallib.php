@@ -227,7 +227,7 @@ class webservice_restful_server extends webservice_base_server {
         if ($this->requestformat == 'json') {
             $parameters = json_decode($content, true); // Convert JSON into array.
         } else if ($this->requestformat == 'xml') {
-            $parametersxml = simplexml_load_string($content);
+            $parametersxml = simplexml_load_string($content, 'SimpleXMLElement', LIBXML_NONET);
             $parameters = json_decode(json_encode($parametersxml), true); // Dirty XML to JSON to PHP array conversion.
         } else {  // Data provided in as URL encoded.
             $parameters = $_POST;
@@ -279,13 +279,7 @@ class webservice_restful_server extends webservice_base_server {
             return false;
         }
 
-        // Get the webservice function parameters or return false.
-        if (empty($this->get_parameters())) {
-            $this->parameters = [];
-        } else if (!($this->parameters = $this->get_parameters())) {
-            return false;
-        }
-
+        // The webservice function parameters are parsed in run() after authentication.
         return true;
     }
 
@@ -321,6 +315,10 @@ class webservice_restful_server extends webservice_base_server {
 
         // Find all needed function info and make sure user may actually execute the function.
         $this->load_function_info();
+
+        // Parse the request body only after the token and function access have been validated.
+        $parameters = $this->get_parameters();
+        $this->parameters = empty($parameters) ? [] : $parameters;
 
         // Log the web service request.
         $params = [
